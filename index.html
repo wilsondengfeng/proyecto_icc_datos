@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>ESP32-S3 · DHT11 + LEDs + Puerta</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@500;700&display=swap');
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --accent: #22d3ee;
+      --accent-2: #8b5cf6;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --border: #1f2937;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: 'Manrope', system-ui, -apple-system, sans-serif;
+      background: radial-gradient(circle at 20% 20%, rgba(34,211,238,0.07), transparent 35%),
+                  radial-gradient(circle at 80% 0%, rgba(139,92,246,0.08), transparent 30%),
+                  var(--bg);
+      color: var(--text);
+      display: flex;
+      justify-content: center;
+      padding: 28px 18px 48px;
+    }
+    .app {
+      width: min(1080px, 100%);
+    }
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      letter-spacing: -0.5px;
+    }
+    .base {
+      display: flex;
+      gap: 8px;
+      width: 100%;
+      max-width: 480px;
+      align-items: center;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      border-radius: 12px;
+    }
+    .base label { font-size: 14px; color: var(--muted); }
+    .base input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text);
+      font-size: 15px;
+      outline: none;
+    }
+    .grid {
+      display: grid;
+      gap: 14px;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.25);
+    }
+    .card h2 { margin: 0 0 6px; font-size: 18px; }
+    .muted { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+    .reading {
+      font-size: 36px;
+      font-weight: 700;
+      margin: 6px 0 2px;
+      letter-spacing: -0.5px;
+    }
+    .inline {
+      display: inline-flex;
+      gap: 10px;
+      align-items: center;
+      margin-top: 10px;
+    }
+    button {
+      padding: 10px 14px;
+      font-size: 15px;
+      border-radius: 10px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      font-weight: 700;
+      transition: transform 0.08s ease, box-shadow 0.2s ease, background 0.2s ease, border 0.2s ease;
+    }
+    button:active { transform: translateY(1px); }
+    .btn-accent { background: var(--accent); color: #0a0f1f; }
+    .btn-ghost { background: transparent; color: var(--text); border-color: var(--border); }
+    .btn-purple { background: var(--accent-2); color: #0a0f1f; }
+    .status-dot {
+      width: 12px; height: 12px; border-radius: 50%;
+      background: #475569;
+      box-shadow: 0 0 0 1px #1f2937;
+    }
+    .status-dot.on { background: #4ade80; }
+    .status-dot.off { background: #ef4444; }
+    .footer {
+      margin-top: 20px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: right;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>ESP32-S3 · DHT11 + LEDs + Puerta</h1>
+      <div class="base">
+        <label for="baseUrl">Base:</label>
+        <input id="baseUrl" type="text" value="http://172.20.10.2" placeholder="http://IP-del-esp32">
+      </div>
+    </header>
+
+    <div class="grid">
+      <div class="card">
+        <h2>DHT11</h2>
+        <p class="muted">Lectura en /sensor (JSON con temp y hum).</p>
+        <div class="reading"><span id="temp">--</span> &deg;C</div>
+        <div class="reading" style="font-size:28px;"><span id="hum">--</span> %</div>
+        <div class="inline">
+          <div id="sensor-status" class="status-dot"></div>
+          <small class="muted" id="sensor-updated">sin datos</small>
+        </div>
+        <div style="margin-top:12px;">
+          <button class="btn-ghost" onclick="actualizarSensor()">Actualizar ahora</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>LED GPIO2</h2>
+        <p class="muted">Ruta: /led/2/on o /led/2/off.</p>
+        <div class="inline">
+          <div id="led2-dot" class="status-dot off"></div>
+          <small class="muted" id="led2-label">Apagado</small>
+        </div>
+        <div style="margin-top:12px; display:flex; gap:10px;">
+          <button class="btn-accent" onclick="setLed(2, true)">Encender</button>
+          <button class="btn-ghost" onclick="setLed(2, false)">Apagar</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>LED GPIO42</h2>
+        <p class="muted">Ruta: /led/42/on o /led/42/off.</p>
+        <div class="inline">
+          <div id="led42-dot" class="status-dot off"></div>
+          <small class="muted" id="led42-label">Apagado</small>
+        </div>
+        <div style="margin-top:12px; display:flex; gap:10px;">
+          <button class="btn-accent" onclick="setLed(42, true)">Encender</button>
+          <button class="btn-ghost" onclick="setLed(42, false)">Apagar</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Puerta (servo GPIO41)</h2>
+        <p class="muted">Rutas: /door/open y /door/close.</p>
+        <div class="inline">
+          <div id="door-dot" class="status-dot off"></div>
+          <small class="muted" id="door-label">Cerrada</small>
+        </div>
+        <div style="margin-top:12px; display:flex; gap:10px;">
+          <button class="btn-purple" onclick="setDoor(true)">Abrir</button>
+          <button class="btn-ghost" onclick="setDoor(false)">Cerrar</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Movimiento (PIR GPIO40)</h2>
+        <p class="muted">Ruta: /pir (JSON { motion: bool }).</p>
+        <div class="inline">
+          <div id="pir-dot" class="status-dot off"></div>
+          <small class="muted" id="pir-label">Sin movimiento</small>
+        </div>
+        <div style="margin-top:12px;">
+          <button class="btn-ghost" onclick="actualizarPir()">Checar ahora</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">Ajusta la IP base a la que imprima el ESP32 en el monitor serie.</div>
+  </div>
+
+  <script>
+    const tempEl = document.getElementById('temp');
+    const humEl = document.getElementById('hum');
+    const sensorStatus = document.getElementById('sensor-status');
+    const sensorUpdated = document.getElementById('sensor-updated');
+    const baseInput = document.getElementById('baseUrl');
+    const ledDots = {
+      2: document.getElementById('led2-dot'),
+      42: document.getElementById('led42-dot')
+    };
+    const ledLabels = {
+      2: document.getElementById('led2-label'),
+      42: document.getElementById('led42-label')
+    };
+    const doorDot = document.getElementById('door-dot');
+    const doorLabel = document.getElementById('door-label');
+    const pirDot = document.getElementById('pir-dot');
+    const pirLabel = document.getElementById('pir-label');
+
+    function base() {
+      return baseInput.value.trim().replace(/\/+$/, '');
+    }
+
+    async function setLed(pin, on) {
+      const path = `${base()}/led/${pin}/${on ? 'on' : 'off'}`;
+      try {
+        await fetch(path, { method: 'POST' });
+        updateLedUI(pin, on);
+      } catch (err) {
+        console.error('LED error', err);
+      }
+    }
+
+    function updateLedUI(pin, on) {
+      const dot = ledDots[pin];
+      const label = ledLabels[pin];
+      if (!dot || !label) return;
+      dot.classList.remove('on', 'off');
+      dot.classList.add(on ? 'on' : 'off');
+      label.textContent = on ? 'Encendido' : 'Apagado';
+    }
+
+    async function setDoor(open) {
+      const path = `${base()}/door/${open ? 'open' : 'close'}`;
+      try {
+        await fetch(path, { method: 'POST' });
+        updateDoorUI(open);
+      } catch (err) {
+        console.error('Door error', err);
+      }
+    }
+
+    function updateDoorUI(open) {
+      doorDot.classList.remove('on', 'off');
+      doorDot.classList.add(open ? 'on' : 'off');
+      doorLabel.textContent = open ? 'Abierta' : 'Cerrada';
+    }
+
+    async function actualizarSensor() {
+      const path = `${base()}/sensor`;
+      try {
+        const resp = await fetch(path);
+        if (!resp.ok) throw new Error('Respuesta no OK');
+        const data = await resp.json();
+        tempEl.textContent = Number(data.temp ?? data.temperature ?? NaN).toFixed(1);
+        humEl.textContent = Number(data.hum ?? data.humidity ?? NaN).toFixed(1);
+        sensorStatus.classList.add('on');
+        sensorUpdated.textContent = `Actualizado: ${new Date().toLocaleTimeString()}`;
+      } catch (err) {
+        sensorStatus.classList.remove('on');
+        sensorStatus.classList.add('off');
+        sensorUpdated.textContent = 'Sin datos';
+        console.error('Sensor error', err);
+      }
+    }
+
+    async function actualizarPir() {
+      const path = `${base()}/pir`;
+      try {
+        const resp = await fetch(path);
+        if (!resp.ok) throw new Error('Respuesta no OK');
+        const data = await resp.json();
+        const motion = !!data.motion;
+        pirDot.classList.remove('on', 'off');
+        pirDot.classList.add(motion ? 'on' : 'off');
+        pirLabel.textContent = motion ? 'Movimiento detectado' : 'Sin movimiento';
+      } catch (err) {
+        pirDot.classList.remove('on');
+        pirDot.classList.add('off');
+        pirLabel.textContent = 'Sin datos';
+        console.error('PIR error', err);
+      }
+    }
+
+    // Refresca cada 2 s
+    setInterval(actualizarSensor, 2000);
+    setInterval(actualizarPir, 2000);
+    actualizarSensor();
+    actualizarPir();
+  </script>
+</body>
+</html>
