@@ -1,12 +1,13 @@
 from flask import Blueprint, request, jsonify, current_app
 import time
-from collections import deque
 
 bp = Blueprint("telemetria", __name__)
 
-# Buffer en memoria por dispositivo y por sensor/actuador (solo el último valor por campo)
+# Buffer en memoria por dispositivo y por sensor/actuador (solo el ultimo valor por campo)
 # Ej: {device: {"temp": {"ts":..., "value":...}, "hum": {...}, ...}}
 _buffers = {}
+# Estado de control deseado por dispositivo (led1, led2, door_open, door_angle)
+_controls = {}
 
 
 def _check_token(req):
@@ -74,6 +75,47 @@ def listar():
                     "value": readings["value"],
                     "ts": readings["ts"],
                     "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(readings["ts"])),
+                }
+            )
+    out.sort(key=lambda x: x["ts"], reverse=True)
+    return jsonify(out), 200
+
+
+@bp.route("/api/control", methods=["POST"])
+def set_control():
+    if not _check_token(request):
+        return jsonify({"error": "unauthorized"}), 401
+    data = request.get_json(silent=True) or {}
+    dev = data.get("device", "esp32")
+    fields = ["led1", "led2", "door_open", "door_angle"]
+    updates = {k: data[k] for k in fields if k in data}
+    if not updates:
+        return jsonify({"error": "sin parametros de control"}), 400
+    ts = time.time()
+    if dev not in _controls:
+        _controls[dev] = {}
+    for k, v in updates.items():
+        _controls[dev][k] = {"ts": ts, "value": v}
+    return jsonify({"ok": True, "device": dev, "updated": list(updates.keys())}), 200
+
+
+@bp.route("/api/control", methods=["GET"])
+def get_control():
+    if not _check_token(request):
+        return jsonify({"error": "unauthorized"}), 401
+    dev = request.args.get("device")
+    out = []
+    for d, controls in _controls.items():
+        if dev and d != dev:
+            continue
+        for name, entry in controls.items():
+            out.append(
+                {
+                    "device": d,
+                    "control": name,
+                    "value": entry["value"],
+                    "ts": entry["ts"],
+                    "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(entry["ts"])),
                 }
             )
     out.sort(key=lambda x: x["ts"], reverse=True)

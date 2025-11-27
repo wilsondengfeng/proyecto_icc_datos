@@ -7,9 +7,10 @@
 // Credenciales WiFi (ajusta a tu red)
 const char* WIFI_SSID = "Deng";
 const char* WIFI_PASS = "12345678";
-// Endpoint en tu EC2 (ajusta puerto según gunicorn)
+// Endpoint en tu EC2 (ajusta puerto segun gunicorn)
 const char* SERVER_URL = "http://44.222.106.109:8000/api";
-// Si en Flask dejaste API_TOKEN vacío, deja esto vacío
+const char* CONTROL_URL = "http://44.222.106.109:8000/api/control";
+// Si en Flask dejaste API_TOKEN vacio, deja esto vacio
 const char* API_TOKEN = "";
 
 // Pines
@@ -30,6 +31,8 @@ WebServer server(80);
 
 unsigned long lastPost = 0;
 const unsigned long postIntervalMs = 5000;  // cada 5s
+unsigned long lastControlPoll = 0;
+const unsigned long controlIntervalMs = 3000;
 
 void sendCors() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -68,6 +71,18 @@ void handleSensor() {
   server.send(200, "application/json", payload);
 }
 
+void applyDoor(bool open) {
+  doorOpen = open;
+  doorServo.write(open ? DOOR_OPEN_ANGLE : DOOR_CLOSED_ANGLE);
+}
+
+void setDoor(bool open) {
+  applyDoor(open);
+  sendCors();
+  String body = String("{\"open\":") + (open ? "true" : "false") + "}";
+  server.send(200, "application/json", body);
+}
+
 void sendTelemetry(float temp, float hum) {
   if (WiFi.status() != WL_CONNECTED) return;
   HTTPClient http;
@@ -95,18 +110,73 @@ void sendTelemetry(float temp, float hum) {
   http.end();
 }
 
-void handlePir() {
-  sendCors();
-  bool motion = digitalRead(PIR_PIN) == HIGH;
-  server.send(200, "application/json", motion ? "{\"motion\":true}" : "{\"motion\":false}");
+bool parseBoolControl(const String& json, const char* controlName, bool& out) {
+  String pattern = String("\"control\":\"") + controlName + "\"";
+  int pos = json.indexOf(pattern);
+  if (pos < 0) return false;
+  int valPos = json.indexOf("\"value\":", pos);
+  if (valPos < 0) return false;
+  int truePos = json.indexOf("true", valPos);
+  int falsePos = json.indexOf("false", valPos);
+  if (falsePos >= 0 && (truePos < 0 || falsePos < truePos)) {
+    out = false;
+    return true;
+  }
+  if (truePos >= 0) {
+    out = true;
+    return true;
+  }
+  return false;
 }
 
-void setDoor(bool open) {
-  doorOpen = open;
-  doorServo.write(open ? DOOR_OPEN_ANGLE : DOOR_CLOSED_ANGLE);
-  sendCors();
-  String body = String("{\"open\":") + (open ? "true" : "false") + "}";
-  server.send(200, "application/json", body);
+bool parseIntControl(const String& json, const char* controlName, int& out) {
+  String pattern = String("\"control\":\"") + controlName + "\"";
+  int pos = json.indexOf(pattern);
+  if (pos < 0) return false;
+  int valPos = json.indexOf("\"value\":", pos);
+  if (valPos < 0) return false;
+  int start = valPos + 8;  // after "value":
+  while (start < (int)json.length() && (json[start] == ' ' || json[start] == ':')) start++;
+  int end = start;
+  while (end < (int)json.length() && ((json[end] >= '0' && json[end] <= '9') || json[end] == '-' || json[end] == '.')) end++;
+  if (end <= start) return false;
+  out = json.substring(start, end).toInt();
+  return true;
+}
+
+void pollControl() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  HTTPClient http;
+  WiFiClient client;
+  String url = String(CONTROL_URL) + "?device=esp32-1";
+  http.begin(client, url);
+  if (strlen(API_TOKEN) > 0) {
+    http.addHeader("X-API-Key", API_TOKEN);
+  }
+  int code = http.GET();
+  if (code != 200) {
+    http.end();
+    return;
+  }
+  String resp = http.getString();
+  http.end();
+
+  bool led1State;
+  if (parseBoolControl(resp, "led1", led1State)) {
+    digitalWrite(LED1_PIN, led1State ? HIGH : LOW);
+  }
+  bool led2State;
+  if (parseBoolControl(resp, "led2", led2State)) {
+    digitalWrite(LED2_PIN, led2State ? HIGH : LOW);
+  }
+  bool doorState;
+  if (parseBoolControl(resp, "door_open", doorState)) {
+    applyDoor(doorState);
+  }
+  int doorAngle;
+  if (parseIntControl(resp, "door_angle", doorAngle)) {
+    doorServo.write(doorAngle);
+  }
 }
 
 void setupRoutes() {
@@ -192,5 +262,10 @@ void loop() {
     if (!isnan(data.temperature) && !isnan(data.humidity)) {
       sendTelemetry(data.temperature, data.humidity);
     }
+  }
+
+  if (now - lastControlPoll >= controlIntervalMs) {
+    lastControlPoll = now;
+    pollControl();
   }
 }
