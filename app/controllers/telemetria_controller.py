@@ -70,10 +70,10 @@ def listar():
         for name, readings in sensors.items():
             out.append(
                 {
-                    "device": dev,
                     "sensor": name,
                     "value": readings["value"],
                     "ts": readings["ts"],
+                    "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(readings["ts"])),
                 }
             )
     out.sort(key=lambda x: x["ts"], reverse=True)
