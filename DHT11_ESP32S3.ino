@@ -112,7 +112,10 @@ void sendTelemetry(float temp, float hum) {
                 ",\"door_angle\":" + doorAngle +
                 ",\"device\":\"esp32-1\"}";
   int code = http.POST(body);
-  // Serial.printf("POST telemetria -> HTTP %d\n", code);
+  Serial.printf("POST telemetria -> HTTP %d\n", code);
+  if (code <= 0) {
+    Serial.printf("Error POST: %s\n", http.errorToString(code).c_str());
+  }
   http.end();
 }
 
@@ -161,9 +164,11 @@ void pollControl() {
   }
   int code = http.GET();
   if (code != 200) {
+    Serial.printf("GET control fallo HTTP %d\n", code);
     http.end();
     return;
   }
+  Serial.println("GET control OK");
   String resp = http.getString();
   http.end();
 
