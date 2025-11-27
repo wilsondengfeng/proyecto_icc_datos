@@ -71,6 +71,12 @@ void handleSensor() {
   server.send(200, "application/json", payload);
 }
 
+void handlePir() {
+  sendCors();
+  bool motion = digitalRead(PIR_PIN) == HIGH;
+  server.send(200, "application/json", motion ? "{\"motion\":true}" : "{\"motion\":false}");
+}
+
 void applyDoor(bool open) {
   doorOpen = open;
   doorServo.write(open ? DOOR_OPEN_ANGLE : DOOR_CLOSED_ANGLE);
